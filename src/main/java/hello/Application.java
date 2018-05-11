@@ -81,7 +81,7 @@ public class Application implements CommandLineRunner{
     @Order(3)
     CommandLineRunner init(StorageService storageService) {
         return (args) -> {
-            storageService.deleteAll();
+            //storageService.deleteAll();
             storageService.init();
         };
     }
