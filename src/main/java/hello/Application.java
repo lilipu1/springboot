@@ -11,26 +11,44 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.annotation.Order;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.listener.PatternTopic;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.data.redis.listener.adapter.MessageListenerAdapter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.stream.Collectors;
 
 @SpringBootApplication
 @EnableScheduling
 @EnableConfigurationProperties(StorageProperties.class)
 @Order(1)
-public class Application implements CommandLineRunner{
+public class Application implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(Application.class);
 
     public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
+        ApplicationContext ctx = SpringApplication.run(Application.class, args);
+
+        StringRedisTemplate template = ctx.getBean(StringRedisTemplate.class);
+        CountDownLatch latch = ctx.getBean(CountDownLatch.class);
+
+        log.info("Sending message...");
+        template.convertAndSend("chat", "Hello from Redis!");
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            log.info(e.getMessage());
+        }
     }
 
     @Bean
@@ -72,9 +90,11 @@ public class Application implements CommandLineRunner{
 
         log.info("Querying for customer records where first_name = 'Josh':");
         jdbcTemplate.query(
-                "SELECT id, first_name, last_name FROM customers WHERE first_name = ?", new Object[] { "Josh" },
+                "SELECT id, first_name, last_name FROM customers WHERE first_name = ?", new Object[]{"Josh"},
                 (rs, rowNum) -> new Customer(rs.getLong("id"), rs.getString("first_name"), rs.getString("last_name"))
         ).forEach(customer -> log.info(customer.toString()));
+
+
     }
 
     @Bean
@@ -86,4 +106,34 @@ public class Application implements CommandLineRunner{
         };
     }
 
+    @Bean
+    RedisMessageListenerContainer container(RedisConnectionFactory connectionFactory,
+                                            MessageListenerAdapter listenerAdapter) {
+        RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+        container.setConnectionFactory(connectionFactory);
+        container.addMessageListener(listenerAdapter, new PatternTopic("chat"));
+
+        return container;
+    }
+
+    @Bean
+    MessageListenerAdapter listenerAdapter(Receiver receiver){
+        return new MessageListenerAdapter(receiver);
+    }
+
+    @Bean
+    Receiver receiver(CountDownLatch latch) {
+        return new Receiver(latch);
+    }
+
+
+    @Bean
+    CountDownLatch latch() {
+        return new CountDownLatch(1);
+    }
+
+    @Bean
+    StringRedisTemplate template(RedisConnectionFactory connectionFactory) {
+        return new StringRedisTemplate(connectionFactory);
+    }
 }
